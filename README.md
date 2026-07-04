@@ -26,9 +26,9 @@ listing appears in one of them.
   building*. Watched buildings show gold on the map.
 - **Alerts** — every refresh, new listings in watched buildings generate
   notifications (bell icon with unread count, alerts tab).
-- **Hourly auto-refresh** — a background scheduler syncs listings from the
-  data provider every hour (configurable via `REFRESH_INTERVAL_MS`), plus a
-  *Refresh now* button.
+- **Auto-refresh every 30 minutes** — a background scheduler syncs listings
+  from the data provider (configurable via `REFRESH_INTERVAL_MS`), plus a
+  *Refresh now* button. The header badge shows which data source is active.
 
 ## Getting started
 
@@ -42,12 +42,16 @@ seeded on first boot.
 
 ## Data source
 
-The app currently runs on a **simulated Ontario MLS feed** (real buildings,
-generated listings) because realtor.ca has no public API and prohibits
-scraping. The data layer is a single pluggable interface
-([lib/providers/types.ts](lib/providers/types.ts)) — see
-[DATA_SOURCES.md](DATA_SOURCES.md) for how to connect licensed, real MLS data
-(CREA DDF, Repliers, etc.).
+A **live CREA DDF® provider** ([lib/providers/ddf.ts](lib/providers/ddf.ts))
+is built in — CREA's official RESO Web API, the same data behind realtor.ca.
+To activate it, register for DDF access (see
+[DATA_SOURCES.md](DATA_SOURCES.md)), copy `.env.example` to `.env.local`,
+fill in `DDF_CLIENT_ID` / `DDF_CLIENT_SECRET`, and restart. The header badge
+flips from *Simulated data* to *Live MLS data (CREA DDF)*.
+
+Without credentials the app runs on a simulated Ontario feed (real
+buildings, generated listings) — realtor.ca has no public API and prohibits
+scraping, so there is no credential-free path to live data.
 
 ## Architecture
 
@@ -63,4 +67,7 @@ scraping. The data layer is a single pluggable interface
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `REFRESH_INTERVAL_MS` | `3600000` (1 h) | Background refresh cadence |
+| `REFRESH_INTERVAL_MS` | `1800000` (30 min) | Background refresh cadence |
+| `DDF_CLIENT_ID` / `DDF_CLIENT_SECRET` | — | CREA DDF® credentials; presence switches to live MLS data |
+| `DDF_FILTER` | Active ON apartments | OData `$filter` for the DDF Property query |
+| `DDF_MAX_PAGES` | `25` | Page cap per sync (100 listings/page) |

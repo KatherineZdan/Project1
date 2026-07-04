@@ -32,25 +32,26 @@ without warning whenever their defenses change — so this project doesn't do it
    licensed agent sponsors data access and the app operates under their
    brokerage's agreement.
 
-## How to plug one in
+## The DDF provider is already built in
 
-Implement the `ListingsProvider` interface in
-[lib/providers/types.ts](lib/providers/types.ts):
+[lib/providers/ddf.ts](lib/providers/ddf.ts) implements the full CREA DDF®
+RESO Web API client: OAuth2 client-credentials auth, paginated OData
+Property queries, and mapping into this app's data model. To activate:
 
-```ts
-export const ddfProvider: ListingsProvider = {
-  name: 'crea-ddf',
-  async fetchBuildings() { /* map RESO Property records to buildings */ },
-  async fetchActiveListings(_tick) { /* query active listings, map fields */ },
-};
-```
+1. Register for DDF access at https://www.crea.ca/technology/ddf/ (free for
+   REALTOR® members; technology providers sign a data agreement). CREA also
+   offers sandbox credentials with sample data for development.
+2. `cp .env.example .env.local` and fill in `DDF_CLIENT_ID` and
+   `DDF_CLIENT_SECRET`.
+3. Restart the server. The console logs `[provider] using live CREA DDF MLS
+   data` and the header badge flips to *Live MLS data (CREA DDF)*.
 
-Then switch one line in [lib/providers/index.ts](lib/providers/index.ts):
+The default query pulls active Ontario apartment/condo listings; tune it
+with `DDF_FILTER` (any OData `$filter` over RESO Property fields) and
+`DDF_MAX_PAGES`.
 
-```ts
-export const provider: ListingsProvider = ddfProvider;
-```
-
-The refresh engine (`lib/refresh.ts`) handles the rest: diffing against the
-local database, expiring delisted units, and notifying watchers of new
-listings. Nothing else in the app needs to change.
+To integrate a different vendor (e.g. Repliers), implement the same
+`ListingsProvider` interface ([lib/providers/types.ts](lib/providers/types.ts))
+and select it in [lib/providers/index.ts](lib/providers/index.ts). The
+refresh engine handles the rest: diffing against the local database,
+expiring delisted units, detecting price drops, and notifying watchers.

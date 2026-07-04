@@ -21,5 +21,6 @@ export function GET(req: NextRequest) {
   return NextResponse.json({
     listings: getActiveListings(filters),
     lastRefreshAt: getMeta('lastRefreshAt'),
+    providerName: getMeta('providerName'),
   });
 }

@@ -48,6 +48,7 @@ export default function AppShell() {
   const [watchedListings, setWatchedListings] = useState<ListingWithBuilding[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const [providerName, setProviderName] = useState<string | null>(null);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const [selectedOsm, setSelectedOsm] = useState<OsmBuilding | null>(null);
   const [osmBuildings, setOsmBuildings] = useState<OsmBuilding[]>([]);
@@ -81,6 +82,7 @@ export default function AppShell() {
     setListings(l.listings);
     setWatchedListings(w.listings);
     setLastRefreshAt(l.lastRefreshAt);
+    setProviderName(l.providerName);
     setNotifications(n.notifications);
   }, [filters]);
 
@@ -252,7 +254,10 @@ export default function AppShell() {
           <div>
             <h1>Ontario Listings Tracker</h1>
             <span className="brand-sub">
-              {lastRefreshAt ? `Data refreshed ${timeAgo(lastRefreshAt)}` : 'Loading…'} · auto-refreshes hourly
+              {lastRefreshAt ? `Data refreshed ${timeAgo(lastRefreshAt)}` : 'Loading…'} · auto-refreshes every 30 min ·{' '}
+              <span className={`source-badge${providerName === 'crea-ddf' ? ' live' : ''}`}>
+                {providerName === 'crea-ddf' ? 'LIVE MLS DATA (CREA DDF)' : 'SIMULATED DATA'}
+              </span>
             </span>
           </div>
         </div>

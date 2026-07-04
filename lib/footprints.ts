@@ -93,10 +93,21 @@ const globalForFp = globalThis as unknown as {
   __footprints?: Record<string, Ring>;
 };
 
+// Above this many buildings (live MLS scale), skip the bulk Overpass fetch:
+// tracked buildings fall back to small squares, and the viewport OSM layer
+// already provides real footprints where the user is looking.
+const MAX_OVERPASS_BUILDINGS = 50;
+
 export async function getFootprints(): Promise<Record<string, Ring>> {
   if (globalForFp.__footprints) return globalForFp.__footprints;
 
   const buildings = await provider.fetchBuildings();
+  if (buildings.length > MAX_OVERPASS_BUILDINGS) {
+    const result: Record<string, Ring> = {};
+    for (const b of buildings) result[b.id] = fallbackSquare(b);
+    globalForFp.__footprints = result;
+    return result;
+  }
   let fetched: Record<string, Ring> = {};
   if (fs.existsSync(CACHE_FILE)) {
     fetched = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));

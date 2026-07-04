@@ -4,5 +4,12 @@ import { getFootprints } from '@/lib/footprints';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  return NextResponse.json({ footprints: await getFootprints() });
+  try {
+    return NextResponse.json({ footprints: await getFootprints() });
+  } catch (err) {
+    // Upstream (provider or Overpass) unavailable — the map still works
+    // with markers and the viewport OSM layer.
+    console.error('[footprints] failed:', err);
+    return NextResponse.json({ footprints: {} });
+  }
 }

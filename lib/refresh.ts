@@ -121,6 +121,7 @@ export async function runRefresh(): Promise<RefreshResult> {
     ).run(...seenIds);
     setMeta('refreshTick', String(tick));
     setMeta('lastRefreshAt', now);
+    setMeta('providerName', provider.name);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');

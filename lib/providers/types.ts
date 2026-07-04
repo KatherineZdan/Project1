@@ -17,10 +17,15 @@ export interface SourceListing {
  * feed (e.g. CREA DDF or a licensed API like Repliers) — see DATA_SOURCES.md.
  *
  * `tick` is a monotonically increasing refresh counter; real providers can
- * ignore it (the mock provider uses it to evolve its inventory over time).
+ * ignore it (the mock provider uses it to evolve inventory and prices).
+ *
+ * `extraBuildings` are user-watched buildings that aren't part of the
+ * provider's own building list (e.g. discovered on the map). Real providers
+ * can ignore this too — real MLS data already covers every building — but
+ * the mock provider uses it to simulate listings appearing in them.
  */
 export interface ListingsProvider {
   name: string;
   fetchBuildings(): Promise<Building[]>;
-  fetchActiveListings(tick: number): Promise<SourceListing[]>;
+  fetchActiveListings(tick: number, extraBuildings?: Building[]): Promise<SourceListing[]>;
 }

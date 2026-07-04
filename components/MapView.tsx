@@ -11,14 +11,17 @@ import {
 } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import type { BuildingWithStats } from '@/lib/types';
-import type { Ring } from '@/lib/footprints';
+import type { BuildingWithStats, OsmBuilding, Ring } from '@/lib/types';
 
 interface MapViewProps {
   buildings: BuildingWithStats[];
   footprints: Record<string, Ring>;
+  osmBuildings: OsmBuilding[];
   selectedBuildingId: string | null;
+  selectedOsmId: string | null;
   onSelectBuilding: (id: string) => void;
+  onSelectOsm: (b: OsmBuilding) => void;
+  onViewportChange: (bbox: string, zoom: number) => void;
 }
 
 // Icons are cached by content so their object identity is stable across
@@ -44,6 +47,7 @@ function markerIcon(count: number, watched: boolean, selected: boolean): L.DivIc
 
 const WATCHED_COLOR = '#f59e0b';
 const BASE_COLOR = '#0ea5e9';
+const OSM_COLOR = '#64748b';
 
 function footprintStyle(watched: boolean, selected: boolean): L.PathOptions {
   const color = watched ? WATCHED_COLOR : BASE_COLOR;
@@ -52,6 +56,15 @@ function footprintStyle(watched: boolean, selected: boolean): L.PathOptions {
     weight: selected ? 3 : 1.5,
     fillColor: color,
     fillOpacity: selected ? 0.45 : 0.2,
+  };
+}
+
+function osmStyle(selected: boolean): L.PathOptions {
+  return {
+    color: selected ? BASE_COLOR : OSM_COLOR,
+    weight: selected ? 2.5 : 1,
+    fillColor: selected ? BASE_COLOR : OSM_COLOR,
+    fillOpacity: selected ? 0.35 : 0.12,
   };
 }
 
@@ -72,13 +85,49 @@ function FlyToSelected({ building }: { building: BuildingWithStats | undefined }
   return null;
 }
 
+function ViewportReporter({
+  onChange,
+}: {
+  onChange: (bbox: string, zoom: number) => void;
+}) {
+  const map = useMap();
+  useEffect(() => {
+    let last = '';
+    const report = () => {
+      const size = map.getSize();
+      if (size.x === 0 || size.y === 0) return; // container not laid out yet
+      const b = map.getBounds();
+      const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+      const key = `${bbox}|${map.getZoom()}`;
+      if (key === last) return;
+      last = key;
+      onChange(bbox, map.getZoom());
+    };
+    report();
+    map.on('moveend zoomend', report);
+    // Also poll: animation-end events don't fire in rAF-throttled
+    // (backgrounded) tabs, and this catches container resizes too.
+    const timer = setInterval(report, 1000);
+    return () => {
+      map.off('moveend zoomend', report);
+      clearInterval(timer);
+    };
+  }, [map, onChange]);
+  return null;
+}
+
 export default function MapView({
   buildings,
   footprints,
+  osmBuildings,
   selectedBuildingId,
+  selectedOsmId,
   onSelectBuilding,
+  onSelectOsm,
+  onViewportChange,
 }: MapViewProps) {
   const selected = buildings.find((b) => b.id === selectedBuildingId);
+  const trackedIds = new Set(buildings.map((b) => b.id));
 
   return (
     <MapContainer
@@ -96,8 +145,32 @@ export default function MapView({
         maxZoom={19}
       />
       <FlyToSelected building={selected} />
+      <ViewportReporter onChange={onViewportChange} />
+
+      {/* Untracked buildings in the viewport — click any of them to track. */}
+      {osmBuildings.map((b) => {
+        if (trackedIds.has(b.id)) return null;
+        const isSelected = b.id === selectedOsmId;
+        return (
+          <Polygon
+            key={b.id}
+            positions={b.ring}
+            pathOptions={osmStyle(isSelected)}
+            eventHandlers={{
+              click: () => onSelectOsm(b),
+              mouseover: (e) =>
+                (e.target as L.Polygon).setStyle({ fillOpacity: 0.4, weight: 2.5, color: BASE_COLOR }),
+              mouseout: (e) => (e.target as L.Polygon).setStyle(osmStyle(isSelected)),
+            }}
+          >
+            <Tooltip sticky>{b.name} — click to select</Tooltip>
+          </Polygon>
+        );
+      })}
+
+      {/* Tracked buildings. */}
       {buildings.map((b) => {
-        const ring = footprints[b.id];
+        const ring = footprints[b.id] ?? b.footprint;
         if (!ring) return null;
         const isSelected = b.id === selectedBuildingId;
         return (

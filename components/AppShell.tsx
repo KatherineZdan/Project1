@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import type {
-  AppNotification,
-  BuildingWithStats,
-  ListingWithBuilding,
+import {
+  OSM_MIN_ZOOM,
+  type AppNotification,
+  type BuildingWithStats,
+  type ListingWithBuilding,
+  type OsmBuilding,
+  type Ring,
 } from '@/lib/types';
-import type { Ring } from '@/lib/footprints';
 
 const MapView = dynamic(() => import('./MapView'), {
   ssr: false,
@@ -43,9 +45,13 @@ export default function AppShell() {
   const [tab, setTab] = useState<Tab>('listings');
   const [buildings, setBuildings] = useState<BuildingWithStats[]>([]);
   const [listings, setListings] = useState<ListingWithBuilding[]>([]);
+  const [watchedListings, setWatchedListings] = useState<ListingWithBuilding[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  const [selectedOsm, setSelectedOsm] = useState<OsmBuilding | null>(null);
+  const [osmBuildings, setOsmBuildings] = useState<OsmBuilding[]>([]);
+  const [mapZoom, setMapZoom] = useState(7);
   const [footprints, setFootprints] = useState<Record<string, Ring>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>({
@@ -61,16 +67,19 @@ export default function AppShell() {
     if (filters.city) qs.set('city', filters.city);
     if (filters.maxPrice) qs.set('maxPrice', filters.maxPrice);
     if (filters.minBeds) qs.set('minBeds', filters.minBeds);
-    const [bRes, lRes, nRes] = await Promise.all([
+    const [bRes, lRes, wRes, nRes] = await Promise.all([
       fetch('/api/buildings'),
       fetch(`/api/listings?${qs}`),
+      fetch('/api/listings?watchedOnly=1'),
       fetch('/api/notifications'),
     ]);
     const b = await bRes.json();
     const l = await lRes.json();
+    const w = await wRes.json();
     const n = await nRes.json();
     setBuildings(b.buildings);
     setListings(l.listings);
+    setWatchedListings(w.listings);
     setLastRefreshAt(l.lastRefreshAt);
     setNotifications(n.notifications);
   }, [filters]);
@@ -88,12 +97,84 @@ export default function AppShell() {
       .catch(() => {});
   }, []);
 
+  // Load untracked OSM buildings for the viewport once zoomed in enough.
+  const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleViewportChange = useCallback((bbox: string, zoom: number) => {
+    setMapZoom(zoom);
+    if (viewportTimer.current) clearTimeout(viewportTimer.current);
+    viewportTimer.current = setTimeout(async () => {
+      if (zoom < OSM_MIN_ZOOM) {
+        setOsmBuildings([]);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/osm-buildings?bbox=${bbox}`);
+        if (res.ok) setOsmBuildings((await res.json()).buildings ?? []);
+      } catch {
+        /* viewport fetch is best-effort */
+      }
+    }, 400);
+  }, []);
+
+  const selectBuilding = useCallback((id: string) => {
+    setSelectedOsm(null);
+    setSelectedBuildingId(id);
+  }, []);
+
+  const selectOsm = useCallback((b: OsmBuilding) => {
+    setSelectedBuildingId(null);
+    setSelectedOsm(b);
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedBuildingId(null);
+    setSelectedOsm(null);
+  }, []);
+
   const toggleWatch = useCallback(
     async (buildingId: string, watch: boolean) => {
       await fetch('/api/watch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ buildingId, watch }),
+      });
+      await loadAll();
+    },
+    [loadAll]
+  );
+
+  const watchOsm = useCallback(
+    async (b: OsmBuilding) => {
+      await fetch('/api/watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buildingId: b.id,
+          watch: true,
+          building: {
+            id: b.id,
+            name: b.name,
+            address: b.address,
+            city: b.city,
+            lat: b.lat,
+            lng: b.lng,
+            footprint: b.ring,
+          },
+        }),
+      });
+      await loadAll();
+      setSelectedOsm(null);
+      setSelectedBuildingId(b.id);
+    },
+    [loadAll]
+  );
+
+  const toggleListingWatch = useCallback(
+    async (listingId: string, watch: boolean) => {
+      await fetch('/api/watch-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, watch }),
       });
       await loadAll();
     },
@@ -125,6 +206,43 @@ export default function AppShell() {
     ? listings.filter((l) => l.buildingId === selectedBuildingId)
     : listings;
   const selectedBuilding = buildings.find((b) => b.id === selectedBuildingId);
+
+  const renderListingCard = (l: ListingWithBuilding) => (
+    <div
+      key={l.id}
+      className="card"
+      role="button"
+      tabIndex={0}
+      onClick={() => selectBuilding(l.buildingId)}
+      onKeyDown={(e) => e.key === 'Enter' && selectBuilding(l.buildingId)}
+    >
+      <div className="card-top">
+        <span className="price">{formatPrice(l.price, l.type)}</span>
+        <span className={`tag ${l.type}`}>{l.type === 'sale' ? 'Sale' : 'Rent'}</span>
+        {isNew(l.firstSeenAt) && <span className="tag new">NEW</span>}
+        {l.prevPrice != null && l.prevPrice > l.price && (
+          <span className="tag drop">▼ was {formatPrice(l.prevPrice, l.type)}</span>
+        )}
+        <button
+          className={`star${l.watched ? ' on' : ''}`}
+          title={l.watched ? 'Stop tracking price' : 'Track price — get alerted on drops'}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleListingWatch(l.id, !l.watched);
+          }}
+        >
+          {l.watched ? '★' : '☆'}
+        </button>
+      </div>
+      <div className="card-title">
+        {l.buildingName} · Unit {l.unit}
+      </div>
+      <div className="card-sub">
+        {l.beds === 0 ? 'Studio' : `${l.beds} bd`} · {l.baths} ba · {l.sqft} sqft
+        · {l.city} · MLS {l.mlsNumber}
+      </div>
+    </div>
+  );
 
   return (
     <div className="shell">
@@ -160,7 +278,7 @@ export default function AppShell() {
               Listings ({listings.length})
             </button>
             <button className={tab === 'watchlist' ? 'active' : ''} onClick={() => setTab('watchlist')}>
-              Watchlist ({watchedBuildings.length})
+              Watchlist ({watchedBuildings.length + watchedListings.length})
             </button>
             <button className={tab === 'alerts' ? 'active' : ''} onClick={() => setTab('alerts')}>
               Alerts{unreadCount ? ` (${unreadCount})` : ''}
@@ -204,7 +322,7 @@ export default function AppShell() {
                 </select>
               </div>
               {selectedBuildingId && (
-                <button className="clear-filter" onClick={() => setSelectedBuildingId(null)}>
+                <button className="clear-filter" onClick={clearSelection}>
                   ✕ Showing one building — clear
                 </button>
               )}
@@ -212,47 +330,29 @@ export default function AppShell() {
                 {visibleListings.length === 0 && (
                   <p className="empty">No active listings match these filters.</p>
                 )}
-                {visibleListings.map((l) => (
-                  <button
-                    key={l.id}
-                    className="card"
-                    onClick={() => setSelectedBuildingId(l.buildingId)}
-                  >
-                    <div className="card-top">
-                      <span className="price">{formatPrice(l.price, l.type)}</span>
-                      <span className={`tag ${l.type}`}>{l.type === 'sale' ? 'Sale' : 'Rent'}</span>
-                      {isNew(l.firstSeenAt) && <span className="tag new">NEW</span>}
-                    </div>
-                    <div className="card-title">
-                      {l.buildingName} · Unit {l.unit}
-                    </div>
-                    <div className="card-sub">
-                      {l.beds === 0 ? 'Studio' : `${l.beds} bd`} · {l.baths} ba · {l.sqft} sqft
-                      · {l.city} · MLS {l.mlsNumber}
-                    </div>
-                  </button>
-                ))}
+                {visibleListings.map(renderListingCard)}
               </div>
             </>
           )}
 
           {tab === 'watchlist' && (
             <div className="list">
+              <div className="section-label">Watched buildings ({watchedBuildings.length})</div>
               {watchedBuildings.length === 0 && (
                 <p className="empty">
-                  You aren&apos;t watching any buildings yet. Click a building on the map and
-                  hit &ldquo;Watch this building&rdquo; — you&apos;ll get an alert whenever a new
-                  listing appears there.
+                  Click any building on the map — even ones without listings — and hit
+                  &ldquo;Watch&rdquo; to get alerts when new listings appear there. Zoom into a
+                  city to see every selectable building.
                 </p>
               )}
               {watchedBuildings.map((b) => (
                 <div key={b.id} className="card static">
                   <div className="card-title">★ {b.name}</div>
                   <div className="card-sub">
-                    {b.address}, {b.city} · {b.saleCount} for sale · {b.rentCount} for rent
+                    {b.address && `${b.address}, `}{b.city} · {b.saleCount} for sale · {b.rentCount} for rent
                   </div>
                   <div className="card-actions">
-                    <button className="mini" onClick={() => setSelectedBuildingId(b.id)}>
+                    <button className="mini" onClick={() => selectBuilding(b.id)}>
                       View on map
                     </button>
                     <button className="mini danger" onClick={() => toggleWatch(b.id, false)}>
@@ -261,6 +361,15 @@ export default function AppShell() {
                   </div>
                 </div>
               ))}
+              <div className="section-label">
+                Price-tracked listings ({watchedListings.length})
+              </div>
+              {watchedListings.length === 0 && (
+                <p className="empty">
+                  Star ☆ a listing to track its price — you&apos;ll get an alert when it drops.
+                </p>
+              )}
+              {watchedListings.map(renderListingCard)}
             </div>
           )}
 
@@ -273,19 +382,27 @@ export default function AppShell() {
               )}
               {notifications.length === 0 && (
                 <p className="empty">
-                  No alerts yet. Watch a building and you&apos;ll be notified here when new
-                  listings appear in it.
+                  No alerts yet. Watch a building to hear about new listings, or star a
+                  listing to hear about price drops.
                 </p>
               )}
               {notifications.map((n) => (
-                <button
+                <div
                   key={n.id}
                   className={`card notif${n.read ? '' : ' unread'}`}
-                  onClick={() => setSelectedBuildingId(n.buildingId)}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => selectBuilding(n.buildingId)}
+                  onKeyDown={(e) => e.key === 'Enter' && selectBuilding(n.buildingId)}
                 >
-                  <div className="card-sub">{timeAgo(n.createdAt)}</div>
+                  <div className="card-top">
+                    <span className={`tag ${n.kind === 'drop' ? 'drop' : 'new'}`}>
+                      {n.kind === 'drop' ? '▼ Price drop' : 'New listing'}
+                    </span>
+                    <span className="card-sub">{timeAgo(n.createdAt)}</span>
+                  </div>
                   <div className="notif-msg">{n.message}</div>
-                </button>
+                </div>
               ))}
             </div>
           )}
@@ -295,33 +412,57 @@ export default function AppShell() {
           <MapView
             buildings={buildings}
             footprints={footprints}
+            osmBuildings={osmBuildings}
             selectedBuildingId={selectedBuildingId}
-            onSelectBuilding={setSelectedBuildingId}
+            selectedOsmId={selectedOsm?.id ?? null}
+            onSelectBuilding={selectBuilding}
+            onSelectOsm={selectOsm}
+            onViewportChange={handleViewportChange}
           />
-          {selectedBuilding && (
+          {mapZoom < OSM_MIN_ZOOM && (
+            <div className="map-hint">Zoom into a city to select any condo building</div>
+          )}
+          {(selectedBuilding || selectedOsm) && (
             <div className="building-card">
-              <button
-                className="building-card-close"
-                onClick={() => setSelectedBuildingId(null)}
-                title="Close"
-              >
+              <button className="building-card-close" onClick={clearSelection} title="Close">
                 ✕
               </button>
-              <strong>{selectedBuilding.name}</strong>
-              <div className="building-card-sub">
-                {selectedBuilding.address}, {selectedBuilding.city}
-              </div>
-              <div className="building-card-sub">
-                {selectedBuilding.saleCount} for sale · {selectedBuilding.rentCount} for rent
-              </div>
-              <button
-                className={`watch-btn${selectedBuilding.watched ? ' on' : ''}`}
-                onClick={() => toggleWatch(selectedBuilding.id, !selectedBuilding.watched)}
-              >
-                {selectedBuilding.watched
-                  ? '★ Watching — click to stop'
-                  : '☆ Watch this building'}
-              </button>
+              {selectedBuilding ? (
+                <>
+                  <strong>{selectedBuilding.name}</strong>
+                  <div className="building-card-sub">
+                    {selectedBuilding.address && `${selectedBuilding.address}, `}
+                    {selectedBuilding.city}
+                  </div>
+                  <div className="building-card-sub">
+                    {selectedBuilding.saleCount} for sale · {selectedBuilding.rentCount} for rent
+                  </div>
+                  <button
+                    className={`watch-btn${selectedBuilding.watched ? ' on' : ''}`}
+                    onClick={() => toggleWatch(selectedBuilding.id, !selectedBuilding.watched)}
+                  >
+                    {selectedBuilding.watched
+                      ? '★ Watching — click to stop'
+                      : '☆ Watch this building'}
+                  </button>
+                </>
+              ) : (
+                selectedOsm && (
+                  <>
+                    <strong>{selectedOsm.name}</strong>
+                    <div className="building-card-sub">
+                      {selectedOsm.address && `${selectedOsm.address}, `}
+                      {selectedOsm.city}
+                    </div>
+                    <div className="building-card-sub">
+                      Not tracked yet — watch it to get alerts when listings appear.
+                    </div>
+                    <button className="watch-btn" onClick={() => watchOsm(selectedOsm)}>
+                      ☆ Watch this building
+                    </button>
+                  </>
+                )
+              )}
             </div>
           )}
         </section>

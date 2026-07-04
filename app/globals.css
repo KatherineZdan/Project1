@@ -299,6 +299,62 @@ body {
   border-color: var(--gold);
 }
 
+.card-top .card-sub {
+  margin-left: auto;
+}
+
+.tag.drop {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+.star {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.star.on {
+  color: var(--gold);
+}
+
+.star:hover {
+  color: var(--gold);
+}
+
+.card-top .tag.drop + .star,
+.card-top .tag + .card-sub {
+  margin-left: auto;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 6px 2px 0;
+}
+
+.map-hint {
+  position: absolute;
+  bottom: 18px;
+  left: 14px;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 7px 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
 .notif-msg {
   font-size: 13px;
   line-height: 1.45;

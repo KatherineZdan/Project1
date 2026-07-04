@@ -14,6 +14,13 @@ listing appears in one of them.
   from OpenStreetMap via Overpass, cached in `data/footprints.json`) are
   drawn on the map; hover highlights them, clicking selects the building
   and lets you add it to your watchlist right from the map.
+- **Watch any building, not just listed ones** — zoom into a city and every
+  residential/condo building footprint in the viewport loads from OSM as a
+  selectable shape. Click one to start tracking it; you'll be alerted when
+  listings appear there.
+- **Price-drop tracking** — star ☆ any listing to track its price. Every
+  refresh compares prices; a drop on a tracked listing fires a ▼ alert, and
+  listing cards show "▼ was $X" badges when a price falls.
 - **Listings browser** with filters: buy/rent, city, max price, min bedrooms.
 - **Building watchlist** — click any building marker and hit *Watch this
   building*. Watched buildings show gold on the map.

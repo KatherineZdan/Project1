@@ -3,6 +3,7 @@ import path from 'path';
 import type { Building } from './types';
 import { provider } from './providers';
 
+
 /**
  * Building footprint polygons for the map, sourced from OpenStreetMap via
  * the Overpass API (ODbL-licensed, attribution already on the map tiles).
@@ -10,7 +11,8 @@ import { provider } from './providers';
  * OSM match fall back to a small square so they stay clickable.
  */
 
-export type Ring = [number, number][]; // [lat, lng] outer ring
+import type { Ring } from './types';
+export type { Ring };
 
 const CACHE_FILE = path.join(process.cwd(), 'data', 'footprints.json');
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';

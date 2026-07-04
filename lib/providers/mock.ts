@@ -3,9 +3,15 @@ import type { ListingsProvider, SourceListing } from './types';
 
 /**
  * Mock Ontario condo market. Real buildings and coordinates, simulated
- * inventory. Listings are generated deterministically from the refresh
- * `tick`: each tick a few new listings appear and the oldest expire, so
- * "Refresh now" behaves like a real hourly MLS sync.
+ * inventory. Everything is generated deterministically from the refresh
+ * `tick`, so history is stable across restarts:
+ *
+ * - Each tick a few new listings appear and the oldest expire, like a real
+ *   hourly MLS sync.
+ * - Prices drift: as a listing ages it has a small chance per tick of a
+ *   2–6% price cut, which drives the price-drop tracking feature.
+ * - User-watched buildings that aren't in the curated list (map-discovered
+ *   OSM buildings) get their own simulated listing stream.
  */
 
 const BUILDINGS: Building[] = [
@@ -35,6 +41,13 @@ const CITY_PRICE_FACTOR: Record<string, number> = {
   Kitchener: 0.7,
 };
 
+// Listings introduced at a given tick stay on the market this many ticks.
+const LISTING_LIFETIME_TICKS = 60;
+// Chance per tick of age that a listing takes a 2–6% price cut.
+const DROP_CHANCE = 0.05;
+// Chance per tick that a watched map-discovered building gets a new listing.
+const EXTRA_LISTING_CHANCE = 0.05;
+
 // Deterministic PRNG so inventory history is stable across restarts.
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -47,12 +60,37 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// Listings introduced at a given tick stay on the market this many ticks.
-const LISTING_LIFETIME_TICKS = 60;
+function hashStr(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
 
-function listingsForTick(tick: number): SourceListing[] {
-  const rng = mulberry32(tick * 2654435761 + 1);
-  const count = 1 + Math.floor(rng() * 3); // 1–3 new listings per tick
+function roundPrice(price: number, type: ListingType): number {
+  return type === 'sale' ? Math.round(price / 1000) * 1000 : Math.round(price / 25) * 25;
+}
+
+/**
+ * Applies the listing's deterministic price-drop history: for each tick of
+ * age, a seeded coin flip decides whether a 2–6% cut happened. Re-computed
+ * identically on every refresh, so a listing's price only ever moves when it
+ * gains a tick of age — exactly like a periodic feed re-sync.
+ */
+function priceWithDrops(listingId: string, base: number, type: ListingType, ageTicks: number): number {
+  let price = base;
+  const h = hashStr(listingId);
+  for (let k = 1; k <= ageTicks; k++) {
+    const rng = mulberry32((h + k * 2654435761) >>> 0);
+    if (rng() < DROP_CHANCE) price *= 1 - (0.02 + rng() * 0.04);
+  }
+  return roundPrice(price, type);
+}
+
+/** Listings born in bucket `t`; `tick` (current) determines age and price. */
+function curatedListingsForBucket(t: number, tick: number): SourceListing[] {
+  const rng = mulberry32(t * 2654435761 + 1);
+  const count = 1 + Math.floor(rng() * 3); // 1–3 new listings per bucket
+  const age = tick + LISTING_LIFETIME_TICKS - 1 - t;
   const out: SourceListing[] = [];
   for (let i = 0; i < count; i++) {
     const building = BUILDINGS[Math.floor(rng() * BUILDINGS.length)];
@@ -61,18 +99,54 @@ function listingsForTick(tick: number): SourceListing[] {
     const baths = Math.max(1, beds - (rng() < 0.5 ? 1 : 0));
     const sqft = Math.round(380 + beds * 230 + rng() * 180);
     const factor = CITY_PRICE_FACTOR[building.city] ?? 0.7;
-    const price =
+    const base =
       type === 'sale'
-        ? Math.round((520000 + beds * 210000 + rng() * 120000) * factor / 1000) * 1000
-        : Math.round((2050 + beds * 680 + rng() * 350) * factor / 25) * 25;
+        ? roundPrice((520000 + beds * 210000 + rng() * 120000) * factor, type)
+        : roundPrice((2050 + beds * 680 + rng() * 350) * factor, type);
     const floor = 2 + Math.floor(rng() * 45);
     const unit = `${floor}0${1 + Math.floor(rng() * 8)}`;
+    const id = `mock-${t}-${i}`;
     out.push({
-      id: `mock-${tick}-${i}`,
+      id,
       buildingId: building.id,
-      mlsNumber: `C${String(5000000 + tick * 17 + i * 3)}`,
+      mlsNumber: `C${String(5000000 + t * 17 + i * 3)}`,
       type,
-      price,
+      price: priceWithDrops(id, base, type, age),
+      beds,
+      baths,
+      sqft,
+      unit,
+    });
+  }
+  return out;
+}
+
+/** Simulated listing stream for a user-watched, map-discovered building. */
+function extraBuildingListings(b: Building, tick: number): SourceListing[] {
+  const hb = hashStr(b.id);
+  const factor = CITY_PRICE_FACTOR[b.city] ?? 0.9;
+  const out: SourceListing[] = [];
+  for (let t = tick; t < tick + LISTING_LIFETIME_TICKS; t++) {
+    const rng = mulberry32((hb ^ Math.imul(t, 40503)) >>> 0);
+    if (rng() >= EXTRA_LISTING_CHANCE) continue;
+    const type: ListingType = rng() < 0.6 ? 'sale' : 'rent';
+    const beds = Math.floor(rng() * 4);
+    const baths = Math.max(1, beds - (rng() < 0.5 ? 1 : 0));
+    const sqft = Math.round(380 + beds * 230 + rng() * 180);
+    const base =
+      type === 'sale'
+        ? roundPrice((520000 + beds * 210000 + rng() * 120000) * factor, type)
+        : roundPrice((2050 + beds * 680 + rng() * 350) * factor, type);
+    const floor = 2 + Math.floor(rng() * 30);
+    const unit = `${floor}0${1 + Math.floor(rng() * 8)}`;
+    const age = tick + LISTING_LIFETIME_TICKS - 1 - t;
+    const id = `mock-${b.id}-${t}`;
+    out.push({
+      id,
+      buildingId: b.id,
+      mlsNumber: `X${String((hb % 900000) + 100000 + t)}`,
+      type,
+      price: priceWithDrops(id, base, type, age),
       beds,
       baths,
       sqft,
@@ -87,12 +161,15 @@ export const mockProvider: ListingsProvider = {
   async fetchBuildings() {
     return BUILDINGS;
   },
-  async fetchActiveListings(tick: number) {
+  async fetchActiveListings(tick: number, extraBuildings: Building[] = []) {
     // Sliding window [tick, tick + lifetime): full inventory from the first
     // refresh, and each subsequent tick adds new listings and expires the oldest.
     const listings: SourceListing[] = [];
     for (let t = tick; t < tick + LISTING_LIFETIME_TICKS; t++) {
-      listings.push(...listingsForTick(t));
+      listings.push(...curatedListingsForBucket(t, tick));
+    }
+    for (const b of extraBuildings) {
+      listings.push(...extraBuildingListings(b, tick));
     }
     return listings;
   },

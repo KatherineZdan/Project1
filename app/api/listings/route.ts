@@ -16,6 +16,7 @@ export function GET(req: NextRequest) {
   if (minBeds > 0) filters.minBeds = minBeds;
   const buildingId = params.get('buildingId');
   if (buildingId) filters.buildingId = buildingId;
+  if (params.get('watchedOnly') === '1') filters.watchedOnly = true;
 
   return NextResponse.json({
     listings: getActiveListings(filters),

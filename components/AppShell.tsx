@@ -7,6 +7,7 @@ import type {
   BuildingWithStats,
   ListingWithBuilding,
 } from '@/lib/types';
+import type { Ring } from '@/lib/footprints';
 
 const MapView = dynamic(() => import('./MapView'), {
   ssr: false,
@@ -45,6 +46,7 @@ export default function AppShell() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  const [footprints, setFootprints] = useState<Record<string, Ring>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>({
     type: '',
@@ -78,6 +80,13 @@ export default function AppShell() {
     const timer = setInterval(loadAll, 30000);
     return () => clearInterval(timer);
   }, [loadAll]);
+
+  useEffect(() => {
+    fetch('/api/footprints')
+      .then((r) => r.json())
+      .then((d) => setFootprints(d.footprints))
+      .catch(() => {});
+  }, []);
 
   const toggleWatch = useCallback(
     async (buildingId: string, watch: boolean) => {
@@ -285,6 +294,7 @@ export default function AppShell() {
         <section className="map-pane">
           <MapView
             buildings={buildings}
+            footprints={footprints}
             selectedBuildingId={selectedBuildingId}
             onSelectBuilding={setSelectedBuildingId}
           />

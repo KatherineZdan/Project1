@@ -6,9 +6,14 @@ listing appears in one of them.
 
 ## Features
 
-- **Interactive map** (Leaflet + OpenStreetMap) of buildings across Ontario —
-  Toronto, Mississauga, Ottawa, Hamilton, London, Kitchener — with live
-  listing counts per building.
+- **Interactive map** (Leaflet + CARTO Positron basemap — streets and
+  buildings only, no POI clutter) of buildings across Ontario — Toronto,
+  Mississauga, Ottawa, Hamilton, London, Kitchener — with live listing
+  counts per building.
+- **Clickable building footprints** — real building outlines (sourced once
+  from OpenStreetMap via Overpass, cached in `data/footprints.json`) are
+  drawn on the map; hover highlights them, clicking selects the building
+  and lets you add it to your watchlist right from the map.
 - **Listings browser** with filters: buy/rent, city, max price, min bedrooms.
 - **Building watchlist** — click any building marker and hit *Watch this
   building*. Watched buildings show gold on the map.
